@@ -1,0 +1,88 @@
+---
+title: "Untitled"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-05-27"
+---
+```{r}
+
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+library(factoextra)
+
+# Read the data
+data_year <- read.csv("/Users/fatimahusain/Downloads/data_by_year.csv")
+
+# View structure
+str(data_year)
+
+# Select key features to plot over time
+features <- data_year %>%
+  select(year, danceability, energy, valence, loudness, tempo, popularity)
+
+# Convert to long format
+features_long <- melt(features, id.vars = "year")
+
+# Plot time series
+ggplot(features_long, aes(x = year, y = value, color = variable)) +
+  geom_line(size = 1) +
+  facet_wrap(~variable, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "Evolution of Audio Features Over Time",
+    x = "Year", y = "Feature Value"
+  )
+
+
+
+```
+```{r}
+# Linear regression: popularity ~ year
+model <- lm(popularity ~ year, data = data_year)
+summary(model)
+
+# Add regression line
+ggplot(data_year, aes(x = year, y = popularity)) +
+  geom_point() +
+  geom_smooth(method = "lm", col = "blue") +
+  theme_minimal() +
+  labs(title = "Popularity Over Time with Linear Trend")
+```
+
+
+
+```{r}
+# Select numerical features only (excluding year)
+feature_data <- data_year %>%
+  select(-year)
+
+# Identify constant columns
+sapply(feature_data, function(x) length(unique(x)) == 1)
+
+# Remove constant columns
+feature_data_clean <- feature_data[, sapply(feature_data, function(x) length(unique(x)) > 1)]
+
+# Now run PCA
+pca_result <- prcomp(feature_data_clean, scale. = TRUE)
+
+# Plot PCA biplot
+fviz_pca_biplot(
+  pca_result,
+  geom.ind = "point",           # plot observations (years)
+  col.ind = data_year$year,     # color by year
+  palette = "viridis",          # nice color palette
+  addEllipses = FALSE,          # no group ellipses
+  label = "var",                # label variables (features)
+  repel = TRUE                  # avoid label overlap
+) +
+  scale_color_viridis_c() +
+  labs(
+    title = "PCA Biplot: Audio Feature Evolution Over Years",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+
+```

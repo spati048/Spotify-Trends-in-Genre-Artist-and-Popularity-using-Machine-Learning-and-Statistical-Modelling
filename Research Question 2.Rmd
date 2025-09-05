@@ -1,0 +1,176 @@
+---
+title: "q3 stat 208"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(cluster)
+library(factoextra)
+library(dendextend)
+```
+
+
+```{r}
+df_genres <- read.csv("~/Desktop/data_by_genres.csv")
+df_artists <- read.csv("~/Desktop/data_by_artist.csv")
+```
+
+
+
+```{r}
+# Remove non-numeric or irrelevant columns
+genres_data <- df_genres %>%
+  select(-mode, -genres, -key)
+
+artists_data <- df_artists %>%
+  select(-mode, -artists, -count, -key)
+
+# Scale the data
+genres_scaled <- scale(genres_data)
+artists_scaled <- scale(artists_data)
+```
+
+```{r}
+set.seed(123)
+fviz_nbclust(genres_scaled, kmeans, method = "wss") + 
+  ggtitle("Elbow Method for Optimal Clusters (Genres)")
+
+k_genres <- kmeans(genres_scaled, centers = 4, nstart = 25)
+fviz_cluster(k_genres, data = genres_scaled, geom = "point", main = "K-means Clustering (Genres)")
+```
+```{r}
+set.seed(123)
+sample_size <- 1000  # You can try smaller (500) or slightly larger if your RAM allows
+
+# Take a sample before PCA
+sampled_artists <- artists_scaled[sample(nrow(artists_scaled), sample_size), ]
+
+# Now do PCA and clustering on sampled data
+pca_result <- prcomp(sampled_artists, scale. = TRUE)
+artists_pca <- pca_result$x[, 1:5]
+
+fviz_nbclust(artists_pca, kmeans, method = "wss") +
+  ggtitle("Elbow Method after (PCA)")
+
+k_artists <- kmeans(artists_pca, centers = 4, nstart = 25)
+fviz_cluster(k_artists, data = artists_pca, geom = "point", main = "K-means Clustering")
+```
+```{r}
+# Compute distance and perform clustering
+dist_genres <- dist(genres_scaled, method = "euclidean")
+hc_genres <- hclust(dist_genres, method = "ward.D2")
+
+# Assign cluster labels (e.g., 4 clusters)
+df_genres$cluster <- as.factor(cutree(hc_genres, k = 4))
+```
+
+```{r}
+df_genres %>%
+  group_by(cluster) %>%
+  slice_max(order_by = popularity, n = 5) %>%
+  select(cluster, genres, popularity, energy, danceability, valence) %>%
+  arrange(cluster)
+```
+
+```{r}
+# Compute mean of traits per cluster
+cluster_means <- df_genres %>%
+  group_by(cluster) %>%
+  summarise(across(c(acousticness, danceability, energy, valence, popularity), mean, .names = "mean_{.col}"))
+
+# Reshape using pivot_longer
+cluster_means_long <- cluster_means %>%
+  pivot_longer(cols = -cluster, names_to = "trait", values_to = "value")
+
+# Plot
+ggplot(cluster_means_long, aes(x = trait, y = value, fill = cluster)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Cluster Audio Trait Profiles", y = "Average Value", x = "Trait") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+set.seed(123)
+sample_size <- 1000
+sample_indices <- sample(nrow(artists_scaled), sample_size)
+sampled_artists_scaled <- artists_scaled[sample_indices, ]
+sampled_artists_raw <- df_artists[sample_indices, ]
+
+pca_result <- prcomp(sampled_artists_scaled, scale. = TRUE)
+artists_pca <- pca_result$x[, 1:5]  # First 5 principal components
+
+
+dist_pca <- dist(artists_pca, method = "euclidean")
+hc_pca <- hclust(dist_pca, method = "ward.D2")
+
+
+artist_clusters <- cutree(hc_pca, k = 4)
+
+
+sampled_artists_raw$cluster <- as.factor(artist_clusters)
+
+
+cat("🔝 Top 5 Artists by Popularity in Each Cluster:\n")
+sampled_artists_raw %>%
+  group_by(cluster) %>%
+  slice_max(order_by = popularity, n = 5) %>%
+  select(cluster, artists, popularity, energy, danceability, valence) %>%
+  arrange(cluster) %>%
+  print(n = Inf)
+
+
+# Average traits per cluster
+cluster_means <- sampled_artists_raw %>%
+  group_by(cluster) %>%
+  summarise(across(c(acousticness, danceability, energy, valence, popularity), mean))
+
+# Reshape for plotting
+cluster_means_long <- cluster_means %>%
+  pivot_longer(cols = -cluster, names_to = "trait", values_to = "value")
+
+# Bar Plot
+ggplot(cluster_means_long, aes(x = trait, y = value, fill = cluster)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Clustered Artist Profiles (Avg Audio Traits)", y = "Average Value", x = "Trait") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Interpretation of the Report:
+1. Clustering Techniques Used
+
+K-means clustering was applied to both genres and artists datasets.
+Hierarchical clustering was also applied to the genre data, but only mentioned for artists in code/logic, not clearly shown or discussed in visual outputs.
+artial coverage of the required methods (k-means = ✔, hierarchical = mostly genres).
+
+🔹 2. Features Used for Clustering
+
+Clustering was based on normalized audio traits:
+acousticness, danceability, energy, valence, tempo, and most importantly, popularity.
+orrect use of features aligning with the research goal.
+
+🔹 3. Genre Clustering Outcomes
+
+Genre data was clustered using both k-means and hierarchical clustering.
+Visuals and tables show how genres grouped based on similarity in audio traits.
+Popularity differences between clusters were analyzed (e.g., high-popularity clusters showed higher energy and danceability).
+his directly supports the “finding high-performing groups” aspect of your question.
+
+🔹 4. Artist Clustering Outcomes
+
+Artist-level analysis used PCA + k-means and found distinct clusters.
+Each cluster was summarized with average trait profiles, including popularity.
+Representative (popular) artists were listed for each cluster.
+his provides clear insight into which groups of artists are more successful in terms of popularity and traits.
+
+🔹 5. Interpretability
+
+Instead of messy dendrograms, the report smartly shows:
+Top 5 genres or artists per cluster (by popularity)
+Bar plots of cluster-level trait profiles
+excellent choice for interpretability — results are understandable and actionable.

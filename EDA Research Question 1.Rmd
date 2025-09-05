@@ -1,0 +1,321 @@
+---
+title: "208"
+output: html_document
+date: "2025-05-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(corrplot)
+library(tidyr)
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(randomForest)
+
+# Load datasets
+artist_data <- read_csv("C:/Users/DELL/Downloads/stat208 dataset/data_by_artist.csv")
+genre_data <- read_csv("C:/Users/DELL/Downloads/stat208 dataset/data_by_genres.csv")
+year_data <- read_csv("C:/Users/DELL/Downloads/stat208 dataset/data_by_year.csv")
+genres_tracks_data <- read_csv("C:/Users/DELL/Downloads/stat208 dataset/data_w_genres.csv")
+track_data <- read_csv("C:/Users/DELL/Downloads/stat208 dataset/data.csv")
+```
+```{r}
+# ============================
+# 🔍 Inspect Data Dirtiness
+# ============================
+
+# Helper function to summarize missing values and duplicates
+inspect_data_quality <- function(df, name) {
+  cat("-----", name, "-----\n")
+  cat("Total rows:", nrow(df), "\n")
+  cat("Missing values:\n")
+  print(colSums(is.na(df)))
+  cat("Total rows with any NA:", sum(!complete.cases(df)), "\n")
+  cat("Duplicate rows:", nrow(df) - nrow(distinct(df)), "\n\n")
+}
+
+# Apply to each dataset
+inspect_data_quality(artist_data, "Artist Data")
+inspect_data_quality(genre_data, "Genre Data")
+inspect_data_quality(year_data, "Year Data")
+inspect_data_quality(genres_tracks_data, "Genres with Tracks Data")
+inspect_data_quality(track_data, "Track Data")
+
+```
+
+```{r}
+# ============================
+# 🧽 Clean Artist Data
+# ============================
+artist_data_clean <- artist_data %>%
+  filter(complete.cases(.)) %>%
+  distinct()
+
+# ============================
+# 🧽 Clean Genre Data
+# ============================
+genre_data_clean <- genre_data %>%
+  filter(complete.cases(.)) %>%
+  distinct()
+
+# ============================
+# 🧽 Clean Year Data
+# ============================
+year_data_clean <- year_data %>%
+  filter(complete.cases(.)) %>%
+  distinct() %>%
+  filter(year >= 1920 & year <= 2023)  # optional sanity check
+
+# ============================
+# 🧽 Clean Genres with Tracks Data
+# ============================
+genres_tracks_data_clean <- genres_tracks_data %>%
+  filter(complete.cases(.)) %>%
+  distinct() %>%
+  filter(popularity > 0)  # remove likely unstreamed tracks
+
+# ============================
+# 🧽 Clean Track Data (Main Dataset)
+# ============================
+# ✅ Updated: Drop columns only if they exist
+track_data_clean <- track_data %>%
+  filter(complete.cases(.)) %>%
+  distinct() %>%
+  filter(popularity > 0) %>%
+  select(-any_of(c("id", "name", "id_artists", "release_date")))
+
+
+```
+# ============================================
+# 2. EDA: Artist Data
+# ============================================
+
+
+```{r}
+# Top 10 artists by popularity (cleaned data)
+artist_data_clean %>%
+  arrange(desc(popularity)) %>%
+  select(artists, popularity) %>%
+  head(10)
+
+# Popularity vs Energy trend (cleaned data)
+ggplot(artist_data_clean, aes(x = energy, y = popularity)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "loess", color = "blue", se = FALSE) +
+  theme_minimal() +
+  labs(
+    title = "Trend: Artist Popularity vs Energy (Cleaned Data)",
+    x = "Energy",
+    y = "Popularity"
+  )
+
+```
+# ============================================
+# 🎼 3. EDA: Genre Data
+# ============================================
+
+
+```{r}
+# Fix: Show only top 20 most popular genres using cleaned data
+top_genres <- genre_data_clean %>%
+  arrange(desc(popularity)) %>%
+  slice(1:20) %>%
+  pivot_longer(cols = c("energy", "danceability", "acousticness"),
+               names_to = "feature", values_to = "value")
+
+ggplot(top_genres, aes(x = reorder(genres, value), y = value, fill = feature)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Top 20 Genres: Energy, Danceability, Acousticness (Cleaned Data)",
+    x = "Genre",
+    y = "Value"
+  )
+
+
+```
+# ============================================
+# 📈 4. EDA: Year Data
+# ============================================
+```{r}
+# Trends over time: valence, loudness, energy (using cleaned data)
+
+# Normalize valence, loudness, and energy to [0,1] for fair comparison
+year_scaled <- year_data_clean %>%
+  mutate(
+    valence_scaled = (valence - min(valence)) / (max(valence) - min(valence)),
+    loudness_scaled = (loudness - min(loudness)) / (max(loudness) - min(loudness)),
+    energy_scaled = (energy - min(energy)) / (max(energy) - min(energy))
+  ) %>%
+  select(year, valence_scaled, loudness_scaled, energy_scaled) %>%
+  pivot_longer(-year, names_to = "feature", values_to = "value")
+
+# Plot normalized trends
+ggplot(year_scaled, aes(x = year, y = value, color = feature)) +
+  geom_line(size = 1.2) +
+  theme_minimal() +
+  labs(
+    title = "Normalized Trends over Time: Valence, Loudness, Energy (Cleaned Data)",
+    x = "Year",
+    y = "Scaled Value"
+  )
+
+
+```
+# ============================================
+# 🎧 5. EDA: Genres with Tracks
+# ============================================
+```{r}
+# Number of genres per track (cleaned data, approximate based on commas)
+genres_tracks_data_clean %>%
+  mutate(genre_count = sapply(genres, function(x) length(strsplit(x, ",")[[1]]))) %>%
+  ggplot(aes(x = genre_count)) +
+  geom_histogram(binwidth = 1, fill = "steelblue") +
+  theme_minimal() +
+  labs(
+    title = "Number of Genres Tagged per Track (Cleaned Data)",
+    x = "Genre Count",
+    y = "Number of Tracks"
+  )
+
+
+```
+# ============================================
+# 💿 6. EDA: Track Data
+# ============================================
+```{r}
+# Correlation matrix (cleaned data)
+numeric_features <- track_data_clean %>%
+  select(where(is.numeric)) %>%
+  na.omit()
+cor_matrix <- cor(numeric_features)
+corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.7)
+
+# Popularity vs Loudness with LOESS smoother (cleaned data)
+ggplot(track_data_clean, aes(x = loudness, y = popularity)) +
+  geom_point(alpha = 0.05, color = "black") +
+  geom_smooth(method = "loess", color = "red", se = FALSE, size = 1.2) +
+  theme_minimal() +
+  labs(
+    title = "Smoothed Trend: Popularity vs Loudness (Cleaned Data)",
+    x = "Loudness (dB)",
+    y = "Popularity"
+  )
+
+# Explicit content distribution (cleaned data)
+track_data_clean$explicit <- factor(track_data_clean$explicit)
+
+ggplot(track_data_clean, aes(x = explicit, fill = explicit)) +
+  geom_bar() +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Explicit Content (Cleaned Data)",
+    x = "Explicit",
+    y = "Count"
+  )
+
+
+
+```
+
+# --------------------------------------
+# 🧹 1. Data Preparation (Cleaned Data)
+# --------------------------------------
+```{r}
+# Keep only relevant numeric predictors from the cleaned dataset
+features <- track_data_clean %>%
+  select(popularity, energy, loudness, danceability, acousticness, valence,
+         instrumentalness, speechiness, liveness, tempo) %>%
+  na.omit()
+
+# Scale features (excluding the response variable)
+scaled_data <- features %>%
+  mutate(across(-popularity, scale))
+
+# Split into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(scaled_data$popularity, p = 0.8, list = FALSE)
+train_data <- scaled_data[train_index, ]
+test_data <- scaled_data[-train_index, ]
+
+# Prepare matrices for glmnet/lasso/ridge models
+x_train <- as.matrix(train_data %>% select(-popularity))
+y_train <- train_data$popularity
+x_test <- as.matrix(test_data %>% select(-popularity))
+y_test <- test_data$popularity
+
+```
+# --------------------------------------
+# 📈 2. Multiple Linear Regression (Cleaned Data)
+# --------------------------------------
+```{r}
+
+lm_model <- lm(popularity ~ ., data = train_data)
+summary(lm_model)
+
+# Predict and evaluate on test set
+lm_preds <- predict(lm_model, newdata = test_data)
+lm_rmse <- sqrt(mean((lm_preds - y_test)^2))
+cat("Linear Regression RMSE:", lm_rmse, "\n")
+
+```
+
+# --------------------------------------
+# 🔒 3. Lasso and Ridge Regression (Cleaned Data)
+# --------------------------------------
+
+```{r}
+
+# Load glmnet if not already loaded
+library(glmnet)
+
+# Lasso Regression (alpha = 1)
+lasso_model <- cv.glmnet(x_train, y_train, alpha = 1)
+lasso_best_lambda <- lasso_model$lambda.min
+cat("Best lambda (Lasso):", lasso_best_lambda, "\n")
+
+# Ridge Regression (alpha = 0)
+ridge_model <- cv.glmnet(x_train, y_train, alpha = 0)
+ridge_best_lambda <- ridge_model$lambda.min
+cat("Best lambda (Ridge):", ridge_best_lambda, "\n")
+
+# Extract coefficients
+lasso_coefs <- coef(lasso_model, s = lasso_best_lambda)
+ridge_coefs <- coef(ridge_model, s = ridge_best_lambda)
+
+```
+# --------------------------------------
+# 🌲 4. Random Forest for Feature Importance (Cleaned Data)
+# --------------------------------------
+
+```{r}
+library(ranger)
+
+set.seed(123)
+rf_model_ranger <- ranger(
+  popularity ~ ., 
+  data = train_data,
+  importance = "impurity",   # or "permutation" for more accurate but slower
+  num.trees = 100,
+  num.threads = parallel::detectCores()  # use all available cores
+)
+
+# View variable importance
+rf_model_ranger$variable.importance
+```
+
+
